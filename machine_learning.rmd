@@ -1,0 +1,98 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Stephanie Huffaker"
+date: "April 4, 2017"
+output: html_document
+---
+
+```{r setup, include = FALSE, echo = TRUE, width = 80, cache = TRUE, tidy.opts = list(width.cutoff = 50)}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Overview
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data Exploration and Feature Selection
+First it's necessary to obtain and load the train data.
+
+```{r}
+trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(trainURL,"pml-training.csv")
+train <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!"))
+```
+
+Next we'll get and load the testing data set but we'll call it "quiz"" to distinguish from the testing set we'll be creating for cross validation.
+
+```{r}
+testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(testURL,"pml-testing.csv")
+quiz <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!"))
+```
+
+Before beginning we'll load the caret package which also loads lattice and ggplot2.
+```{r}
+library(caret)
+```
+
+Now we will set seed for reproducibility and split the training data into a train and test set for cross validation.
+```{r}
+set.seed(913)
+inTrain <- createDataPartition(train$classe, p = 3/4)[[1]]
+training <- train[inTrain,]
+testing <- train[-inTrain,]
+```
+
+Next we need to explore data and determine which variables to use in a prediction model. This is feature selection and is critical to ensuring that the machine learning algorithms are using the right data to create a prediction. Features with near zero variance or more than 95% NA values were removed.  In addition timestamp features were removed as they would not be predictors of the activity logically. After removing these features, I reviewed a summary of the remaining features to review for reasonableness before proceeding with building the prediction models.
+
+```{r}
+nzv <- nearZeroVar(training, saveMetrics = TRUE)
+nzv$naratio <- apply(training, 2, function(col)sum(is.na(col))/length(col))
+nzvind <- nearZeroVar(training)
+
+naind <- nzv[,5] > 0.95 
+naind <- which(naind == TRUE)
+
+combind <- c(naind,nzvind)
+
+trainingsub <- training[,-combind]
+trainingsub <- subset(trainingsub, select = -c(X,user_name,raw_timestamp_part_1,raw_timestamp_part_2,cvtd_timestamp))
+
+summary(subset(trainingsub, select = -c(classe)))
+```
+
+## Training the Models
+I started with using 3 prediction models, random forest (rf), gradiant boosting (gbm) and linear discriminate analysis (lda).
+
+```{r}
+rf <- train(classe ~ ., data = trainingsub, method = "rf")
+gbm <- train(classe ~ ., data = trainingsub, method = "gbm", verbose = FALSE)
+lda <- train(classe ~ ., data = trainingsub, method = "lda")
+
+
+```
+
+## Assessing Out of Sample Error Rate using Cross Validation
+After the 3 models were created, cross validation was performed by applying the models to the testing data we set aside earlier using the predict function.
+
+```{r}
+predrf <- predict(rf, testing)
+predgbm <- predict(gbm, testing)
+predlda <- predict(lda, testing)
+
+confusionMatrix(predrf, testing$classe)$overall[1]
+confusionMatrix(predgbm, testing$classe)$overall[1]
+confusionMatrix(predlda, testing$classe)$overall[1]
+
+```
+Next I created a combined model using random forests on all 3 of the previously created models.
+
+```{r}
+combrf <- data.frame(predrf, predgbm, predlda, classe = testing$classe)
+combModFit <- train(classe ~ ., method = "rf", data = combrf)
+combPred <- predict(combModFit, combrf)
+confusionMatrix(combPred, testing$classe)$overall[1]
+```
+## Conclusion
+The first random forest model predicted the activity in the testing data set at 99.83% out of sample error rate which was better than both gradiant boosting (98.6%) and linear discriminate analysis (70.5%). The combined model had 99.86% out of sample error rate - only *slightly* better than the original random forest model. However, since it was better (if only a tiny amount), I chose to use the combined model to apply to the quiz data set. After submitting the predictions, it performed at 100% accuracy.
+
